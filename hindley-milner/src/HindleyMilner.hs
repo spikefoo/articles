@@ -501,7 +501,7 @@ throw = Infer . throwE
 
 
 
--- | The unification of two 'MType's is the most general substituion that can be
+-- | The unification of two 'MType's is the most general substitution that can be
 -- applied to both of them in order to yield the same result.
 --
 -- >>> let m1 = TFun "a" "b"

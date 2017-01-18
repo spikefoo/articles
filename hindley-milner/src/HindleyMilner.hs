@@ -472,16 +472,12 @@ instance Pretty InferError where
 runInfer :: Infer a -- ^ Inference data
          -> Either InferError a
 runInfer (Infer inf) =
-    evalState (runExceptT inf) (map Name (infiniteSupply alphabet))
+    evalState (runExceptT inf) infiniteSupply
   where
 
-    alphabet = map T.singleton ['a'..'z']
-
-    -- [a, b, c] ==> [a,b,c, a1,b1,c1, a2,b2,c2, …]
-    infiniteSupply supply = supply <> addSuffixes supply (1 :: Integer)
-      where
-        addSuffixes xs n = map (\x -> addSuffix x n) xs <> addSuffixes xs (n+1)
-        addSuffix x n = x <> T.pack (show n)
+    infiniteSupply = [Name (l <> s) | s <- suffixes, l <- letters]
+    letters = map T.singleton ['a'..'z']
+    suffixes = "" : (map (T.pack . show) [(0 :: Integer)..])
 
 
 

@@ -410,16 +410,18 @@ instance Monoid Subst where
 
 
 
--- | The context type holds a supply of unique names.
---
--- /Invariant:/ the supply must be infinite, or we might run out of names to
--- give to things.
-data Context = Context { supply :: [Name] }
-
 -- | The inference type holds the current context, and can fail with a
 -- descriptive error if something goes wrong.
 newtype Infer a = Infer (ExceptT InferError (State Context) a)
     deriving (Functor, Applicative, Monad)
+
+-- | The context type represents the current state of the type inference
+-- algorithm. It holds a supply of unique names, and a substitution that
+-- represents all the type information we have learned so far.
+--
+-- /Invariant:/ the supply must be infinite, or we might run out of names to
+-- give to things.
+data Context = Context { supply :: [Name], substs :: Subst }
 
 -- | Errors that can happen during the type inference process.
 data InferError =
@@ -478,7 +480,7 @@ runInfer (Infer inf) =
     evalState (runExceptT inf) initialContext
   where
 
-    initialContext = Context { supply = infiniteSupply }
+    initialContext = Context { supply = infiniteSupply, substs = mempty }
     infiniteSupply = [Name (l <> s) | s <- suffixes, l <- letters]
     letters = map T.singleton ['a'..'z']
     suffixes = "" : (map (T.pack . show) [(0 :: Integer)..])
@@ -491,6 +493,21 @@ runInfer (Infer inf) =
 -- Unknown identifier: var
 throw :: InferError -> Infer a
 throw = Infer . throwE
+
+
+
+-- | Apply the current substitution to a variable in an 'Infer'ence context.
+applyCurrentSubst :: (Substitutable a) => a -> Infer a
+applyCurrentSubst x = Infer . lift $ do
+  Context { substs = s } <- get
+  pure $ applySubst s x
+
+
+
+-- | Add a substitution to the current substitution in an 'Infer'ence context.
+addSubst :: Subst -> Infer ()
+addSubst s = Infer . lift $
+  modify $ \ctx -> ctx { substs = s <> (substs ctx) }
 
 
 
@@ -518,12 +535,12 @@ throw = Infer . throwE
 -- >>> case runInfer inferSubst of Right subst -> putPprLn subst
 -- { a ––> c
 -- , b ––> Either d e }
-unify :: (MType, MType) -> Infer Subst
+unify :: (MType, MType) -> Infer ()
 unify = \case
     (TFun a b,    TFun x y)          -> unifyBinary (a,b) (x,y)
     (TVar v,      x)                 -> v `bindVariableTo` x
     (x,           TVar v)            -> v `bindVariableTo` x
-    (TConst a,    TConst b) | a == b -> pure mempty
+    (TConst a,    TConst b) | a == b -> pure ()
     (TList a,     TList b)           -> unify (a,b)
     (TEither a b, TEither x y)       -> unifyBinary (a,b) (x,y)
     (TTuple a b,  TTuple x y)        -> unifyBinary (a,b) (x,y)
@@ -534,11 +551,11 @@ unify = \case
     -- Unification of binary type constructors, such as functions and Either.
     -- Unification is first done for the first operand, and assuming the
     -- required substitution, for the second one.
-    unifyBinary :: (MType, MType) -> (MType, MType) -> Infer Subst
+    unifyBinary :: (MType, MType) -> (MType, MType) -> Infer ()
     unifyBinary (a,b) (x,y) = do
-        s1 <- unify (a, x)
-        s2 <- unify (applySubst s1 (b, y))
-        pure (s1 <> s2)
+        unify (a, x)
+        (b', y') <- applyCurrentSubst (b, y)
+        unify (b', y')
 
 
 
@@ -554,9 +571,9 @@ unify = \case
 --   'MType', the resulting substitution would not be idempotent: the 'MType'
 --   would be replaced again, yielding a different result. This is known as the
 --   Occurs Check.
-bindVariableTo :: Name -> MType -> Infer Subst
+bindVariableTo :: Name -> MType -> Infer ()
 
-bindVariableTo name (TVar v) | boundToSelf = pure mempty
+bindVariableTo name (TVar v) | boundToSelf = pure ()
   where
     boundToSelf = name == v
 
@@ -564,7 +581,7 @@ bindVariableTo name mType | name `occursIn` mType = throw (OccursCheckFailed nam
   where
     n `occursIn` ty = n `S.member` freeMType ty
 
-bindVariableTo name mType = pure (Subst (M.singleton name mType))
+bindVariableTo name mType = addSubst (Subst (M.singleton name mType))
 
 
 
@@ -717,7 +734,7 @@ extendEnv (Env env) (name, pType) = Env (M.insert name pType env)
 -- this goal.
 --
 -- This is widely known as /Algorithm W/.
-infer :: Env -> Exp -> Infer (Subst, MType)
+infer :: Env -> Exp -> Infer MType
 infer env = \case
     ELit lit    -> inferLit lit
     EVar name   -> inferVar env name
@@ -728,8 +745,8 @@ infer env = \case
 
 
 -- | Literals such as 'True' and '1' have their types hard-coded.
-inferLit :: Lit -> Infer (Subst, MType)
-inferLit lit = pure (mempty, TConst litTy)
+inferLit :: Lit -> Infer MType
+inferLit lit = pure (TConst litTy)
   where
     litTy = case lit of
         LBool    {} -> "Bool"
@@ -747,12 +764,12 @@ inferLit lit = pure (mempty, TConst litTy)
 --
 -- This means that if @Γ@ /literally contains/ (@∈@) a value, then it also
 -- /entails it/ (@⊢@) in all its instantiations.
-inferVar :: Env -> Name -> Infer (Subst, MType)
+inferVar :: Env -> Name -> Infer MType
 inferVar env name = do
     sigma <- lookupEnv env name -- x:σ ∈ Γ
     tau <- instantiate sigma    -- τ = instantiate(σ)
                                 -- ------------------
-    pure (mempty, tau)          -- Γ ⊢ x:τ
+    pure tau                    -- Γ ⊢ x:τ
 
 
 
@@ -816,14 +833,16 @@ inferApp
     :: Env
     -> Exp -- ^ __f__ x
     -> Exp -- ^ f __x__
-    -> Infer (Subst, MType)
+    -> Infer MType
 inferApp env f x = do
-    (s1, fTau) <- infer env f                         -- f : fτ
-    (s2, xTau) <- infer (applySubst s1 env) x         -- x : xτ
+    fTau <- infer env f                               -- f : fτ
+    env' <- applyCurrentSubst env
+    xTau <- infer env' x                              -- x : xτ
     fxTau <- fresh                                    -- fxτ = fresh
-    s3 <- unify (applySubst s2 fTau, TFun xTau fxTau) -- unify (fτ, xτ → fxτ)
-    let s = s3 <> s2 <> s1                            -- --------------------
-    pure (s, applySubst s3 fxTau)                     -- f x : fxτ
+    fTau' <- applyCurrentSubst fTau
+    unify (fTau', TFun xTau fxTau)                    -- unify (fτ, xτ → fxτ)
+                                                      -- --------------------
+    applyCurrentSubst fxTau                           -- f x : fxτ
 
 
 
@@ -846,14 +865,14 @@ inferAbs
     :: Env
     -> Name -- ^ λ__x__. e
     -> Exp  -- ^ λx. __e__
-    -> Infer (Subst, MType)
+    -> Infer MType
 inferAbs env x e = do
     tau <- fresh                           -- τ = fresh
     let sigma = Forall [] tau              -- σ = ∀∅. τ
         env' = extendEnv env (x, sigma)    -- Γ, x:σ …
-    (s, tau') <- infer env' e              --        … ⊢ e:τ'
-                                           -- ---------------
-    pure (s, TFun (applySubst s tau) tau') -- λx.e : τ→τ'
+    tau' <- infer env' e                   --        … ⊢ e:τ'
+    tau'' <- applyCurrentSubst tau         -- ---------------
+    pure $ TFun tau'' tau'                 -- λx.e : τ→τ'
 
 
 
@@ -877,15 +896,15 @@ inferLet
     -> Name -- ^ let __x__ = e in e'
     -> Exp -- ^ let x = __e__ in e'
     -> Exp -- ^ let x = e in __e'__
-    -> Infer (Subst, MType)
+    -> Infer MType
 inferLet env x e e' = do
-    (s1, tau) <- infer env e              -- Γ ⊢ e:τ
-    let env' = applySubst s1 env
+    tau <- infer env e                    -- Γ ⊢ e:τ
+    env' <- applyCurrentSubst env
     let sigma = generalize env' tau       -- σ = gen(Γ,τ)
     let env'' = extendEnv env' (x, sigma) -- Γ, x:σ
-    (s2, tau') <- infer env'' e'          -- Γ ⊢ …
+    tau' <- infer env'' e'                -- Γ ⊢ …
                                           -- --------------------------
-    pure (s2 <> s1, tau')                 --     … let x = e in e' : τ'
+    pure tau'                             --     … let x = e in e' : τ'
 
 
 

@@ -681,17 +681,10 @@ instance IsString Exp where
 -- of this is η expansion, which transforms @f@ into @λx. f x@, where "x" is a
 -- new name, i.e. unbound in the current context.
 fresh :: Infer MType
-fresh = drawFromSupply >>= \case
-    Right name -> pure (TVar name)
-    Left err -> throw err
-
-  where
-
-    drawFromSupply :: Infer (Either InferError Name)
-    drawFromSupply = Infer (do
-        s:upply <- lift get
-        lift (put upply)
-        pure (Right s) )
+fresh = Infer . lift $ do
+  name:rest <- get
+  put rest
+  pure $ TVar name
 
 
 

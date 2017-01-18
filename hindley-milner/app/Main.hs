@@ -40,7 +40,6 @@ prelude = Env (M.fromList
     , ("(>)",        Forall []              (tInteger ~> tInteger ~> tBool))
     , ("(>=)",       Forall []              (tInteger ~> tInteger ~> tBool))
     , ("const",      Forall ["a","b"]       ("a" ~> "b" ~> "a"))
-    , ("Cont/>>=",   Forall ["a"]           ((("a" ~> "r") ~> "r") ~> ("a" ~> (("b" ~> "r") ~> "r")) ~> (("b" ~> "r") ~> "r")))
     , ("find",       Forall ["a","b"]       (("a" ~> tBool) ~> TList "a" ~> tMaybe "a"))
     , ("fix",        Forall ["a"]           (("a" ~> "a") ~> "a"))
     , ("foldr",      Forall ["a","b"]       (("a" ~> "b" ~> "b") ~> "b" ~> TList "a" ~> "b"))

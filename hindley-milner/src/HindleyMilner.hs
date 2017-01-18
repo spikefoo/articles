@@ -410,12 +410,15 @@ instance Monoid Subst where
 
 
 
--- | The inference type holds a supply of unique names, and can fail with a
--- descriptive error if something goes wrong.
+-- | The context type holds a supply of unique names.
 --
 -- /Invariant:/ the supply must be infinite, or we might run out of names to
 -- give to things.
-newtype Infer a = Infer (ExceptT InferError (State [Name]) a)
+data Context = Context { supply :: [Name] }
+
+-- | The inference type holds the current context, and can fail with a
+-- descriptive error if something goes wrong.
+newtype Infer a = Infer (ExceptT InferError (State Context) a)
     deriving (Functor, Applicative, Monad)
 
 -- | Errors that can happen during the type inference process.
@@ -472,9 +475,10 @@ instance Pretty InferError where
 runInfer :: Infer a -- ^ Inference data
          -> Either InferError a
 runInfer (Infer inf) =
-    evalState (runExceptT inf) infiniteSupply
+    evalState (runExceptT inf) initialContext
   where
 
+    initialContext = Context { supply = infiniteSupply }
     infiniteSupply = [Name (l <> s) | s <- suffixes, l <- letters]
     letters = map T.singleton ['a'..'z']
     suffixes = "" : (map (T.pack . show) [(0 :: Integer)..])
@@ -682,8 +686,8 @@ instance IsString Exp where
 -- new name, i.e. unbound in the current context.
 fresh :: Infer MType
 fresh = Infer . lift $ do
-  name:rest <- get
-  put rest
+  c@Context { supply = name:rest } <- get
+  put c { supply = rest }
   pure $ TVar name
 
 

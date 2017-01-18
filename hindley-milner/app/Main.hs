@@ -51,6 +51,7 @@ prelude = Env (M.fromList
     , ("reverse",    Forall ["a"]           (TList "a" ~> TList "a"))
     , ("Right",      Forall ["a","b"]       ("b" ~> TEither "a" "b"))
     , ("[]",         Forall ["a"]           (TList "a"))
+    , ("repeat",     Forall ["a"]           ("a" ~> TList "a"))
     , ("(:)",        Forall ["a"]           ("a" ~> TList "a" ~> TList "a"))
     ])
   where
@@ -91,6 +92,7 @@ main = do
     let inferAndPrint = T.putStrLn . ("  " <>) . showType prelude
     T.putStrLn "Well-typed:"
     do
+        inferAndPrint (lambda ["n"] (apply (apply "(+)" ["n"]) [apply "id" ["n"]]))
         inferAndPrint (lambda ["x"] "x")
         inferAndPrint (lambda ["f","g","x"] (apply "f" ["x", apply "g" ["x"]]))
         inferAndPrint (lambda ["f","g","x"] (apply "f" [apply "g" ["x"]]))
@@ -104,8 +106,27 @@ main = do
         inferAndPrint (apply "map" ["map"])
         inferAndPrint (lambda ["x"] (apply "ifThenElse" [apply "(<)" ["x", int 0], int 0, "x"]))
         inferAndPrint (lambda ["x"] (apply "fix" [lambda ["xs"] (apply "(:)" ["x", "xs"])]))
+        inferAndPrint (lambda ["x"] (ELet "y" (apply "(+)" ["x", "x"]) "y"))
+        inferAndPrint (lambda ["x"] (ELet "f" (apply "(+)" ["x"]) "x"))
+        inferAndPrint (lambda ["x"] (ELet "unused" (int 4) (apply "(+)" ["x", "x"])))
+        inferAndPrint
+          (ELet "f" "id"
+            (apply "(+)" [
+              apply "ifThenElse" [apply "f" [bool True], int 1, int 0],
+              apply "f" [int 1]]))
+        inferAndPrint (lambda ["x"] (ELet "f" "id" (apply "f" [int 2])))
+        inferAndPrint
+          (lambda ["x"]
+            (ELet "f" (lambda ["y"] (apply "(:)" ["y", apply "repeat" ["x"]]))
+              (apply "f" [int 2])))
+        inferAndPrint (lambda ["y"] (apply (apply "(,)" ["y"]) [apply (apply "(+)" ["y"]) [int 1]]))
     T.putStrLn "Ill-typed:"
     do
+        inferAndPrint
+          (lambda ["f"]
+            (apply "(+)" [
+              apply "ifThenElse" [apply "f" [bool True], int 1, int 0],
+              apply "f" [int 1]]))
         inferAndPrint (apply "(*)" [int 1, bool True])
         inferAndPrint (apply "foldr" [int 1])
         inferAndPrint (lambda ["x"] (apply "x" ["x"]))

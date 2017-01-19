@@ -471,8 +471,8 @@ instance Pretty InferError where
 -- >>> let expr = EAbs "f" (EAbs "g" (EAbs "x" (EApp (EApp "f" "x") (EApp "g" "x"))))
 -- >>> putPprLn expr
 -- λf g x. f x (g x)
--- >>> let inferred = runInfer (infer (Env []) expr)
--- >>> let demonstrate = \case Right (_, ty) -> T.putStrLn (":: " <> ppr ty)
+-- >>> let inferred = runInfer (infer (Env []) expr >>= applyCurrentSubst)
+-- >>> let demonstrate = \case Right ty -> T.putStrLn (":: " <> ppr ty)
 -- >>> demonstrate inferred
 -- :: (c → e → f) → (c → e) → c → f
 runInfer :: Infer a -- ^ Inference data
@@ -523,8 +523,11 @@ addSubst s = Infer . lift $
 
 
 
--- | The unification of two 'MType's is the most general substitution that can be
--- applied to both of them in order to yield the same result.
+-- | Unify two 'MType's.
+--
+-- Unifying two 'MType's adds to the current context the most general
+-- substitution that can be applied to both of them in order to yield
+-- the same result.
 --
 -- >>> let m1 = TFun "a" "b"
 -- >>> putPprLn m1
@@ -533,9 +536,10 @@ addSubst s = Infer . lift $
 -- >>> putPprLn m2
 -- c → Either d e
 -- >>> let inferSubst = unify (m1, m2)
--- >>> case runInfer inferSubst of Right subst -> putPprLn subst
--- { a ––> c
--- , b ––> Either d e }
+-- >>> case runInfer (inferSubst >> applyCurrentSubst (TVar "a")) of Right result -> putPprLn result
+-- c
+-- >>> case runInfer (inferSubst >> applyCurrentSubst (TVar "b")) of Right result -> putPprLn result
+-- Either d e
 unify :: (MType, MType) -> Infer ()
 unify = applyCurrentSubst >=> \case
     (TFun a b,    TFun x y)          -> unifyBinary (a,b) (x,y)
@@ -911,7 +915,7 @@ inferLet env x e e' = do
 -- >>> let tau = TFun "a" (TFun "b" "a")
 -- >>> putPprLn tau
 -- a → b → a
--- >>> putPprLn (generalize (Env [("x", Forall [] "b")]) tau)
+-- >>> case runInfer (generalize (Env [("x", Forall [] "b")]) tau) of Right sigma -> putPprLn sigma
 -- ∀a. a → b → a
 --
 -- In more formal notation,

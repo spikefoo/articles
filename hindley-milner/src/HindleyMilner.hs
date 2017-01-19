@@ -28,6 +28,7 @@
 
 module HindleyMilner where
 
+import           Control.Monad              ((>=>))
 import           Control.Monad.Trans
 import           Control.Monad.Trans.Except
 import           Control.Monad.Trans.State
@@ -536,7 +537,7 @@ addSubst s = Infer . lift $
 -- { a ––> c
 -- , b ––> Either d e }
 unify :: (MType, MType) -> Infer ()
-unify = \case
+unify = applyCurrentSubst >=> \case
     (TFun a b,    TFun x y)          -> unifyBinary (a,b) (x,y)
     (TVar v,      x)                 -> v `bindVariableTo` x
     (x,           TVar v)            -> v `bindVariableTo` x
@@ -554,8 +555,7 @@ unify = \case
     unifyBinary :: (MType, MType) -> (MType, MType) -> Infer ()
     unifyBinary (a,b) (x,y) = do
         unify (a, x)
-        (b', y') <- applyCurrentSubst (b, y)
-        unify (b', y')
+        unify (b, y)
 
 
 
@@ -836,13 +836,11 @@ inferApp
     -> Infer MType
 inferApp env f x = do
     fTau <- infer env f                               -- f : fτ
-    env' <- applyCurrentSubst env
-    xTau <- infer env' x                              -- x : xτ
+    xTau <- infer env x                               -- x : xτ
     fxTau <- fresh                                    -- fxτ = fresh
-    fTau' <- applyCurrentSubst fTau
-    unify (fTau', TFun xTau fxTau)                    -- unify (fτ, xτ → fxτ)
+    unify (fTau, TFun xTau fxTau)                     -- unify (fτ, xτ → fxτ)
                                                       -- --------------------
-    applyCurrentSubst fxTau                           -- f x : fxτ
+    pure fxTau                                        -- f x : fxτ
 
 
 
@@ -871,8 +869,8 @@ inferAbs env x e = do
     let sigma = Forall [] tau              -- σ = ∀∅. τ
         env' = extendEnv env (x, sigma)    -- Γ, x:σ …
     tau' <- infer env' e                   --        … ⊢ e:τ'
-    tau'' <- applyCurrentSubst tau         -- ---------------
-    pure $ TFun tau'' tau'                 -- λx.e : τ→τ'
+                                           -- ---------------
+    pure $ TFun tau tau'                   -- λx.e : τ→τ'
 
 
 
@@ -899,10 +897,9 @@ inferLet
     -> Infer MType
 inferLet env x e e' = do
     tau <- infer env e                    -- Γ ⊢ e:τ
-    env' <- applyCurrentSubst env
-    let sigma = generalize env' tau       -- σ = gen(Γ,τ)
-    let env'' = extendEnv env' (x, sigma) -- Γ, x:σ
-    tau' <- infer env'' e'                -- Γ ⊢ …
+    sigma <- generalize env tau           -- σ = gen(Γ,τ)
+    let env' = extendEnv env (x, sigma)   -- Γ, x:σ
+    tau' <- infer env' e'                 -- Γ ⊢ …
                                           -- --------------------------
     pure tau'                             --     … let x = e in e' : τ'
 
@@ -926,7 +923,7 @@ inferLet env x e e' = do
 --
 -- 'generalize' can also be seen as the opposite of 'instantiate', which
 -- converts a 'PType' to an 'MType'.
-generalize :: Env -> MType -> PType
-generalize env mType = Forall qs mType
-  where
-    qs = freeMType mType `S.difference` freeEnv env
+generalize :: Env -> MType -> Infer PType
+generalize env = applyCurrentSubst >=> \mType ->
+    let qs = freeMType mType `S.difference` freeEnv env
+    in pure $ Forall qs mType

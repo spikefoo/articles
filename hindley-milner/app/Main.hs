@@ -200,6 +200,6 @@ showType :: Env    -- ^ Starting environment, e.g. 'prelude'.
          -> Text   -- ^ Text representation of the result. Contains an error
                    --   message on failure.
 showType env expr =
-    case (runInfer . fmap (generalize (Env mempty)) . infer env) expr of
+    case runInfer $ infer env expr >>= (generalize (Env mempty)) of
         Left err -> "Error inferring type of " <> ppr expr <>": " <> ppr err
         Right ty -> ppr expr <> " :: " <> ppr ty

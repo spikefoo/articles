@@ -119,7 +119,7 @@ main = do
           (lambda ["x"]
             (ELet "f" (lambda ["y"] (apply "(:)" ["y", apply "repeat" ["x"]]))
               (apply "f" [int 2])))
-        inferAndPrint (lambda ["y"] (apply (apply "(,)" ["y"]) [apply (apply "(+)" ["y"]) [int 1]]))
+        inferAndPrint (lambda ["y"] (apply (apply "(,)" ["y"]) [apply "(+)" ["y", int 1]]))
     T.putStrLn "Ill-typed:"
     do
         inferAndPrint

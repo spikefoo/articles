@@ -927,3 +927,13 @@ generalize :: Env -> MType -> Infer PType
 generalize env = applyCurrentSubst >=> \mType ->
     let qs = freeMType mType `S.difference` freeEnv env
     in pure $ Forall qs mType
+
+
+
+-- | Infer the most general type of an 'Exp'ression in an 'Env'ironment.
+--
+-- This function is the main entry point to this module.
+inferPType :: Env -> Exp -> Either InferError PType
+inferPType env expr = runInfer $ do
+    mType <- infer env expr
+    generalize (Env mempty) mType
